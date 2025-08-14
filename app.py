@@ -1,22 +1,25 @@
-import streamlit as st
-import pandas as pd
+import os
+import platform
+import subprocess
 from openpyxl import load_workbook
+from openpyxl.utils import range_boundaries
 from datetime import datetime
+import pandas as pd
 import collections
-import io
+import streamlit as st
 
 # --------------------
-# 模組 1: 解合併並填入原值
+# 模組 1: 解合併並填入原值 (安全版)
 # --------------------
-def unmerge_and_fill(ws):
-    merged_ranges = list(ws.merged_cells.ranges)
-    for merged_range in merged_ranges:
-        cells = list(ws[merged_range.coord])
-        value = cells[0][0].value
-        ws.unmerge_cells(str(merged_range))
-        for row in cells:
-            for cell in row:
-                cell.value = value
+def unmerge_and_fill(sheet):
+    merged_ranges = list(sheet.merged_cells.ranges)
+    for merged in merged_ranges:
+        min_col, min_row, max_col, max_row = range_boundaries(str(merged))
+        top_left_value = sheet.cell(row=min_row, column=min_col).value
+        sheet.unmerge_cells(str(merged))
+        for r in range(min_row, max_row + 1):
+            for c in range(min_col, max_col + 1):
+                sheet.cell(row=r, column=c).value = top_left_value
 
 # --------------------
 # 模組 2: 彙整班表資料
@@ -37,17 +40,16 @@ def consolidate_selected_sheets(wb, sheet_names):
                     date_val = cell_value
                     i = r + 3
                     while i <= max_row:
-                        shift_type = str(ws.cell(i, c).value).strip() if ws.cell(i, c).value else ""
+                        shift_type = str(ws.cell(i, c).value).strip()
                         if isinstance(ws.cell(i, c).value, datetime) or shift_type == "":
                             break
                         if shift_type in ["早","午","晚"]:
                             i += 1
                             while i <= max_row:
-                                val_cell = ws.cell(i, c).value
-                                if isinstance(val_cell, datetime):
+                                if isinstance(ws.cell(i, c).value, datetime):
                                     break
-                                val = str(val_cell).strip() if val_cell else ""
-                                if val in ["早","午","晚"] or val == "":
+                                val = str(ws.cell(i, c).value).strip()
+                                if val in ["早","午","晚"]:
                                     break
                                 all_data.append([
                                     clinic_name,
@@ -86,20 +88,13 @@ def get_class_code(emp_title, clinic_name, shift_type):
 def create_shift_analysis(wb, df_consolidated, ws_employee):
     emp_dict = {}
     for row in ws_employee.iter_rows(min_row=2, values_only=True):
-        emp_id = row[0] if len(row) > 0 else ""
-        name = row[1] if len(row) > 1 else ""
-        dept = row[2] if len(row) > 2 else ""
-        title = row[3] if len(row) > 3 else ""
+        emp_id, name, dept, title = row[:4]
         if name:
             emp_dict[name.strip()] = (emp_id, dept, title)
 
     shift_dict = {}
     for idx, row in df_consolidated.iterrows():
-        clinic = row["診所"]
-        date_str = row["日期"]
-        shift_type = row["班別"]
-        name = row["姓名"]
-        e_value = row["A欄資料"]
+        clinic, date_str, shift_type, name, e_value, _ = row
         if not name or len(name) > 4:
             continue
         key = f"{name}|{date_str}|{clinic}|{e_value}"
@@ -134,10 +129,7 @@ def create_shift_summary(wb):
     shift_dict = collections.defaultdict(dict)
 
     for row in ws_analysis.iter_rows(min_row=2, values_only=True):
-        emp_id = row[1] if len(row) > 1 else ""
-        emp_name = row[2] if len(row) > 2 else ""
-        shift_date = row[6] if len(row) > 6 else ""
-        class_code = row[8] if len(row) > 8 else ""
+        emp_id, emp_name, _, _, _, shift_date, _, _, class_code = row[1:10]
         if not emp_id or not emp_name or not shift_date:
             continue
         emp_key = f"{emp_id}|{emp_name}"
@@ -160,29 +152,40 @@ def create_shift_summary(wb):
 # --------------------
 st.title("班表處理系統")
 
-# 上傳班表 Excel
-shift_file = st.file_uploader("上傳班表 Excel", type=["xlsx","xlsm"])
+shift_file = st.file_uploader("請上傳班表 Excel 檔案", type=["xlsx","xlsm"])
 if shift_file:
     wb_shift = load_workbook(shift_file)
     excluded = ["彙整結果","班別分析","班別總表"]
     selectable_sheets = [s for s in wb_shift.sheetnames if s not in excluded]
+
     selected_sheets = st.multiselect("選擇要處理的工作表", selectable_sheets)
+    if selected_sheets:
+        employee_file = st.file_uploader("請上傳員工資料 Excel 檔案", type=["xlsx","xlsm"])
+        if employee_file:
+            wb_employee = load_workbook(employee_file)
+            employee_sheet_name = st.selectbox("選擇員工資料工作表", wb_employee.sheetnames)
+            ws_employee = wb_employee[employee_sheet_name]
 
-    # 上傳員工資料
-    employee_file = st.file_uploader("上傳員工資料 Excel", type=["xlsx","xlsm"])
-    if employee_file:
-        wb_employee = load_workbook(employee_file)
-        employee_sheet_name = st.selectbox("選擇員工資料工作表", wb_employee.sheetnames)
-        ws_employee = wb_employee[employee_sheet_name]
+            if st.button("執行班表處理"):
+                with st.spinner("處理中..."):
+                    df_consolidated = consolidate_selected_sheets(wb_shift, selected_sheets)
 
-        if st.button("執行班表處理"):
-            df_consolidated = consolidate_selected_sheets(wb_shift, selected_sheets)
-            create_shift_analysis(wb_shift, df_consolidated, ws_employee)
-            create_shift_summary(wb_shift)
+                    # 彙整結果
+                    if "彙整結果" in wb_shift.sheetnames:
+                        ws_out = wb_shift["彙整結果"]
+                        ws_out.delete_rows(1, ws_out.max_row)
+                    else:
+                        ws_out = wb_shift.create_sheet("彙整結果")
+                    for r_idx, row in df_consolidated.iterrows():
+                        for c_idx, val in enumerate(row, 1):
+                            ws_out.cell(row=r_idx+2, column=c_idx, value=val)
 
-            # 儲存到 BytesIO，提供下載
-            output_stream = io.BytesIO()
-            wb_shift.save(output_stream)
-            output_stream.seek(0)
-            st.success("班表處理完成！")
-            st.download_button("下載結果 Excel", data=output_stream, file_name="output.xlsx")
+                    # 建立班別分析表 & 總表
+                    create_shift_analysis(wb_shift, df_consolidated, ws_employee)
+                    create_shift_summary(wb_shift)
+
+                    # 存檔到下載
+                    output_path = "output.xlsx"
+                    wb_shift.save(output_path)
+                    st.success(f"班表處理完成！")
+                    st.download_button("下載結果 Excel", data=open(output_path,"rb"), file_name="output.xlsx")
