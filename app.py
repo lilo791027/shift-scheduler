@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import io
-from datetime import datetime
 
 # ------------------- 函數區 -------------------
 def unmerge_and_fill(df):
@@ -67,7 +66,7 @@ def get_class_code(empTitle, clinicName, shiftType):
 
 def build_shift_analysis(summarized_df, employee_df):
     summarized_df['員工姓名'] = summarized_df['員工姓名'].astype(str)
-    employee_df.columns = employee_df.columns.str.strip()  # 去掉欄位空格
+    employee_df.columns = employee_df.columns.str.strip()
     emp_dict = {row['員工姓名']: (str(row['員工編號']), row['所屬部門'], row['職稱'])
                 for idx,row in employee_df.iterrows()}
     shift_dict = {}
@@ -86,7 +85,7 @@ def build_shift_analysis(summarized_df, employee_df):
     return pd.DataFrame(analysis_rows, columns=["診所","員工編號","所屬部門","員工姓名","職稱","日期","班別","E欄資料","班別代碼"])
 
 def build_shift_summary(analysis_df):
-    all_dates = pd.date_range("2025-08-01","2025-08-31").strftime("%Y-%m-%d")
+    all_dates = sorted(analysis_df['日期'].unique())
     summary_dict = {}
     for _, row in analysis_df.iterrows():
         emp_key = (row['員工編號'], row['員工姓名'])
@@ -99,8 +98,7 @@ def build_shift_summary(analysis_df):
     return pd.DataFrame(summary_rows, columns=["員工編號","員工姓名"] + list(all_dates))
 
 # ------------------- Streamlit 網頁 -------------------
-st.title("線上排班系統")
-st.write("上傳班表 Excel 與員工資料 Excel，生成彙整結果、班別分析與班別總表。")
+st.title("線上排班系統（偵錯版）")
 
 schedule_file = st.file_uploader("班表 Excel", type=["xlsx"])
 employee_file = st.file_uploader("員工資料 Excel", type=["xlsx"])
@@ -109,10 +107,27 @@ if schedule_file and employee_file:
     df_schedule = pd.read_excel(schedule_file)
     df_employee = pd.read_excel(employee_file)
 
+    st.subheader("1️⃣ 原始班表資料")
+    st.dataframe(df_schedule)
+
+    st.subheader("2️⃣ 原始員工資料")
+    st.dataframe(df_employee)
+
     df_schedule = unmerge_and_fill(df_schedule)
     df_summary = summarize_schedule(df_schedule)
+
+    st.subheader("3️⃣ 彙整結果（df_summary）")
+    st.dataframe(df_summary)
+
     df_analysis = build_shift_analysis(df_summary, df_employee)
+
+    st.subheader("4️⃣ 班別分析（df_analysis）")
+    st.dataframe(df_analysis)
+
     df_final = build_shift_summary(df_analysis)
+
+    st.subheader("5️⃣ 班別總表（df_final）")
+    st.dataframe(df_final)
 
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
@@ -122,9 +137,8 @@ if schedule_file and employee_file:
     output.seek(0)
 
     st.download_button(
-        label="下載排班結果 Excel",
+        label="📥 下載排班結果 Excel",
         data=output,
         file_name="排班結果.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
-
