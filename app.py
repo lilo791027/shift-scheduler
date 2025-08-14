@@ -1,24 +1,27 @@
 import streamlit as st
 import pandas as pd
 from openpyxl import load_workbook, Workbook
+from openpyxl.utils import range_boundaries
 from io import BytesIO
 from datetime import datetime
 import collections
 
 # --------------------
-# 輔助函數
+# 修正版: 解合併並填入原值
 # --------------------
 def unmerge_and_fill(ws):
-    for row in ws.iter_rows():
-        for cell in row:
-            if cell.merge_cells:
-                merged_range = cell.merged_cells.ranges[0]
-                value = cell.value
-                ws.unmerge_cells(str(merged_range))
-                for r in ws[merged_range.coord]:
-                    for c in r:
-                        c.value = value
+    merged_ranges = list(ws.merged_cells.ranges)  # 取得所有合併範圍
+    for merged_range in merged_ranges:
+        min_col, min_row, max_col, max_row = range_boundaries(str(merged_range))
+        value = ws.cell(row=min_row, column=min_col).value
+        ws.unmerge_cells(str(merged_range))
+        for r in range(min_row, max_row+1):
+            for c in range(min_col, max_col+1):
+                ws.cell(row=r, column=c, value=value)
 
+# --------------------
+# 輔助函數
+# --------------------
 def format_shift_order(shift_str):
     result = ""
     for s in ["早","午","晚"]:
