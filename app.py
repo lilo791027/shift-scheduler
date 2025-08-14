@@ -6,12 +6,12 @@ import collections
 from io import BytesIO
 
 # --------------------
-# 模組 1: 解合併並填入原值
+# 模組 1: 安全解合併並填入原值
 # --------------------
 def unmerge_and_fill(ws):
     for row in ws.iter_rows():
         for cell in row:
-            if cell.merge_cells:
+            if hasattr(cell, "merge_cells") and cell.merge_cells:
                 merged_ranges = list(cell.merged_cells.ranges)
                 if merged_ranges:
                     merged_range = merged_ranges[0]
