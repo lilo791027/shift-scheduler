@@ -168,11 +168,17 @@ def create_shift_analysis(wb, df_consolidated, ws_employee):
 def create_shift_summary(wb):
     ws_analysis = wb["班別分析"]
     
-    # 修正：從實際資料中取得日期範圍
+    # 修正：從實際資料中取得日期範圍，並轉換為文字格式
     all_dates = set()
     for row in ws_analysis.iter_rows(min_row=2, values_only=True):
         if len(row) >= 6 and row[5]:  # 第6欄是日期
-            all_dates.add(row[5])
+            # 確保日期是文字格式
+            date_value = row[5]
+            if isinstance(date_value, datetime):
+                date_str = date_value.strftime("%Y/%m/%d")
+            else:
+                date_str = str(date_value)
+            all_dates.add(date_str)
     
     all_dates = sorted(list(all_dates))
     shift_dict = collections.defaultdict(dict)
@@ -184,8 +190,15 @@ def create_shift_summary(wb):
         
         if not emp_id or not emp_name or not shift_date:
             continue
+        
+        # 確保日期是文字格式
+        if isinstance(shift_date, datetime):
+            shift_date_str = shift_date.strftime("%Y/%m/%d")
+        else:
+            shift_date_str = str(shift_date)
+            
         emp_key = f"{emp_id}|{emp_name}"
-        shift_dict[emp_key][shift_date] = class_code
+        shift_dict[emp_key][shift_date_str] = class_code
 
     if "班別總表" in wb.sheetnames:
         ws_target = wb["班別總表"]
@@ -193,11 +206,25 @@ def create_shift_summary(wb):
     else:
         ws_target = wb.create_sheet("班別總表")
 
-    ws_target.append(["員工編號","員工姓名"] + all_dates)
+    # 寫入標題行，確保日期是文字格式
+    headers = ["員工編號", "員工姓名"] + all_dates
+    for col_idx, header in enumerate(headers, 1):
+        cell = ws_target.cell(row=1, column=col_idx, value=str(header))
+        # 設定為文字格式
+        cell.number_format = '@'
+    
+    # 寫入資料行
     for emp_key, date_map in shift_dict.items():
         emp_id, emp_name = emp_key.split("|")
-        row = [emp_id, emp_name] + [date_map.get(d,"") for d in all_dates]
-        ws_target.append(row)
+        row_data = [str(emp_id), str(emp_name)] + [date_map.get(d,"") for d in all_dates]
+        
+        # 逐一寫入每個儲存格並設定為文字格式
+        row_num = ws_target.max_row + 1
+        for col_idx, value in enumerate(row_data, 1):
+            cell = ws_target.cell(row=row_num, column=col_idx, value=str(value))
+            # 對日期欄位設定文字格式
+            if col_idx > 2:  # 日期欄位從第3欄開始
+                cell.number_format = '@'
 
 # --------------------
 # Streamlit 主程式（修正版）
@@ -243,10 +270,13 @@ if shift_file and employee_file:
                         new_ws = new_wb.active
                         new_ws.title = "班別總表"
                         
-                        # 複製班別總表的內容到新工作簿
+                        # 複製班別總表的內容到新工作簿，確保日期為文字格式
                         ws_summary = wb_shift["班別總表"]
-                        for row in ws_summary.iter_rows(values_only=True):
-                            new_ws.append(row)
+                        for row_idx, row in enumerate(ws_summary.iter_rows(values_only=True), 1):
+                            for col_idx, value in enumerate(row, 1):
+                                cell = new_ws.cell(row=row_idx, column=col_idx, value=str(value) if value is not None else "")
+                                # 設定所有儲存格為文字格式
+                                cell.number_format = '@'
                         
                         # 儲存到暫存檔
                         with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp_file:
