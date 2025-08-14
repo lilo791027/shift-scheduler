@@ -71,13 +71,60 @@ def format_shift_order(shift_str):
     return result
 
 def get_class_code(emp_title, clinic_name, shift_type):
-    if not emp_title:
+    """
+    根據員工職稱、診所名稱和班別類型生成班別代碼
+    """
+    if not emp_title or emp_title.strip() == "":
         return ""
+    
+    emp_title = emp_title.strip()
+    
+    # 處理純早班的特殊職稱
+    pure_morning_titles = ["早班護理師", "早班內視鏡助理", "醫務專員", "兼職早班內視鏡助理"]
+    if emp_title in pure_morning_titles:
+        return "【員工】純早班"
+    
+    # 根據職稱決定基本代碼
+    class_code = ""
     if emp_title == "醫師":
         class_code = "★醫師★"
-    else:
+    elif emp_title in ["櫃臺", "護理師", "兼職護理師", "兼職跟診助理", "副店長"]:
         class_code = "【員工】"
-    class_code += shift_type + "班"
+    else:
+        # 處理其他特殊情況
+        if "副店長" in emp_title:
+            class_code = "【員工】"
+        elif "店長" in emp_title or "護士" in emp_title:
+            class_code = "◇主管◇"
+        else:
+            class_code = ""
+    
+    # 如果不是早班，根據診所名稱添加地區代碼
+    if shift_type != "早":
+        target_clinics = ["上吉診所", "立吉診所", "上承診所", "立全診所", "立竹診所", "立順診所", "上京診所"]
+        if clinic_name in target_clinics:
+            class_code += "板土中京"
+        elif clinic_name == "立丞診所":
+            class_code += "立丞"
+    
+    # 根據班別類型添加班別後綴
+    shift_suffix_map = {
+        "早": "早班",
+        "午晚": "午晚班", 
+        "早午晚": "全天班",
+        "早晚": "早晚班",
+        "午": "午班",
+        "晚": "晚班",
+        "早午": "早午班"
+    }
+    
+    if shift_type in shift_suffix_map:
+        class_code += shift_suffix_map[shift_type]
+    
+    # 修正重複的早班問題
+    if class_code.endswith("早班早班"):
+        class_code = class_code.replace("早班早班", "早班")
+    
     return class_code
 
 def create_shift_analysis(wb, df_consolidated, ws_employee):
