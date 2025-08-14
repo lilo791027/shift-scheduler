@@ -231,32 +231,26 @@ if shift_file and employee_file:
                         st.subheader("彙整結果預覽")
                         st.dataframe(df_consolidated.head(10))
                         
-                        # 將彙整結果寫入工作表
-                        if "彙整結果" in wb_shift.sheetnames:
-                            ws_out = wb_shift["彙整結果"]
-                            ws_out.delete_rows(1, ws_out.max_row)
-                        else:
-                            ws_out = wb_shift.create_sheet("彙整結果")
-                        
-                        # 寫入標題行
-                        headers = ["診所","日期","班別","姓名","A欄資料","U欄資料"]
-                        for c_idx, header in enumerate(headers, 1):
-                            ws_out.cell(row=1, column=c_idx, value=header)
-                        
-                        # 寫入資料
-                        for r_idx, row in df_consolidated.iterrows():
-                            for c_idx, val in enumerate(row, 1):
-                                ws_out.cell(row=r_idx+2, column=c_idx, value=val)
-
-                        # 建立班別分析表
+                        # 建立班別分析表（用於生成班別總表的中間步驟）
                         create_shift_analysis(wb_shift, df_consolidated, ws_employee)
                         
                         # 建立班別總表
                         create_shift_summary(wb_shift)
 
+                        # 創建新的工作簿，只包含班別總表
+                        from openpyxl import Workbook
+                        new_wb = Workbook()
+                        new_ws = new_wb.active
+                        new_ws.title = "班別總表"
+                        
+                        # 複製班別總表的內容到新工作簿
+                        ws_summary = wb_shift["班別總表"]
+                        for row in ws_summary.iter_rows(values_only=True):
+                            new_ws.append(row)
+                        
                         # 儲存到暫存檔
                         with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp_file:
-                            wb_shift.save(tmp_file.name)
+                            new_wb.save(tmp_file.name)
                             
                             # 讀取檔案內容
                             with open(tmp_file.name, "rb") as f:
@@ -265,11 +259,11 @@ if shift_file and employee_file:
                             # 清理暫存檔
                             os.unlink(tmp_file.name)
                             
-                        st.success("所有班表任務已完成！")
+                        st.success("班別總表已生成完成！")
                         st.download_button(
-                            label="下載結果 Excel",
+                            label="下載班別總表 Excel",
                             data=file_data,
-                            file_name="班表處理結果.xlsx",
+                            file_name="班別總表.xlsx",
                             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                         )
                         
@@ -277,6 +271,16 @@ if shift_file and employee_file:
                         st.subheader("處理統計")
                         st.write(f"總共處理了 {len(df_consolidated)} 筆班表記錄")
                         st.write(f"處理了 {len(selected_sheets)} 個工作表")
+                        
+                        # 顯示班別總表預覽
+                        st.subheader("班別總表預覽")
+                        summary_data = []
+                        for row in ws_summary.iter_rows(values_only=True):
+                            summary_data.append(row)
+                        
+                        if summary_data:
+                            df_summary = pd.DataFrame(summary_data[1:], columns=summary_data[0])
+                            st.dataframe(df_summary.head(10))
                         
     except Exception as e:
         st.error(f"處理過程中發生錯誤：{str(e)}")
