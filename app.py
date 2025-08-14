@@ -41,7 +41,7 @@ def summarize_schedule(df):
                         i += 1
             except:
                 continue
-    return pd.DataFrame(result, columns=["診所","日期","班別","姓名","A欄資料","U欄資料"])
+    return pd.DataFrame(result, columns=["診所","日期","班別","員工姓名","A欄資料","U欄資料"])
 
 def get_class_code(empTitle, clinicName, shiftType):
     if not empTitle:
@@ -55,7 +55,6 @@ def get_class_code(empTitle, clinicName, shiftType):
         class_code = "【員工】"
     elif "店長" in empTitle or "護士" in empTitle:
         class_code = "◇主管◇"
-    # 保留城市/診所條件不變
     if shiftType != "早":
         if clinicName in ["上吉診所","立吉診所","上承診所","立全診所","立竹診所","立順診所","上京診所"]:
             class_code += "板土中京"
@@ -67,12 +66,13 @@ def get_class_code(empTitle, clinicName, shiftType):
     return class_code
 
 def build_shift_analysis(summarized_df, employee_df):
-    summarized_df['姓名'] = summarized_df['姓名'].astype(str)
-    emp_dict = {row['姓名']: (str(row['員工編號']), row['所屬部門'], row['職稱'])
+    summarized_df['員工姓名'] = summarized_df['員工姓名'].astype(str)
+    employee_df.columns = employee_df.columns.str.strip()  # 去掉欄位空格
+    emp_dict = {row['員工姓名']: (str(row['員工編號']), row['所屬部門'], row['職稱'])
                 for idx,row in employee_df.iterrows()}
     shift_dict = {}
     for _, row in summarized_df.iterrows():
-        key = f"{row['姓名']}|{row['日期']}|{row['診所']}|{row['A欄資料']}"
+        key = f"{row['員工姓名']}|{row['日期']}|{row['診所']}|{row['A欄資料']}"
         shift_dict[key] = shift_dict.get(key, "") + row['班別']
 
     analysis_rows = []
@@ -83,13 +83,13 @@ def build_shift_analysis(summarized_df, employee_df):
         class_code = get_class_code(empTitle, clinic_name, shift_order)
         analysis_rows.append([clinic_name, empID, empDept, name, empTitle, date_value, shift_order, e_value, class_code])
 
-    return pd.DataFrame(analysis_rows, columns=["診所","員工編號","所屬部門","姓名","職稱","日期","班別","E欄資料","班別代碼"])
+    return pd.DataFrame(analysis_rows, columns=["診所","員工編號","所屬部門","員工姓名","職稱","日期","班別","E欄資料","班別代碼"])
 
 def build_shift_summary(analysis_df):
     all_dates = pd.date_range("2025-08-01","2025-08-31").strftime("%Y-%m-%d")
     summary_dict = {}
     for _, row in analysis_df.iterrows():
-        emp_key = (row['員工編號'], row['姓名'])
+        emp_key = (row['員工編號'], row['員工姓名'])
         summary_dict.setdefault(emp_key,{})[row['日期']] = row['班別代碼']
 
     summary_rows = []
@@ -127,3 +127,4 @@ if schedule_file and employee_file:
         file_name="排班結果.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
+
