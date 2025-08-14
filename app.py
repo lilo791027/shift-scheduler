@@ -116,16 +116,25 @@ def create_shift_analysis(wb, df_consolidated, ws_employee):
         ws_target.append([clinic, emp_id, emp_dept, name, emp_title, date_str, shift_type, e_value, get_class_code(emp_title, clinic, shift_type)])
 
 # --------------------
-# 模組 4: 建立班別總表（安全版）
+# 模組 4: 建立班別總表（修正版）
 # --------------------
 def create_shift_summary(wb):
     ws_analysis = wb["班別分析"]
-    all_dates = [datetime(2025,8,i).strftime("%Y-%m-%d") for i in range(1,32)]
+    
+    # 修正：從實際資料中取得日期範圍
+    all_dates = set()
+    for row in ws_analysis.iter_rows(min_row=2, values_only=True):
+        if len(row) >= 6 and row[5]:  # 第6欄是日期
+            all_dates.add(row[5])
+    
+    all_dates = sorted(list(all_dates))
     shift_dict = collections.defaultdict(dict)
 
     for row in ws_analysis.iter_rows(min_row=2, values_only=True):
-        row_data = list(row[1:10]) + [""] * (9 - len(row[1:10]))
-        emp_id, emp_name, _, _, _, shift_date, _, _, class_code = row_data
+        if len(row) < 9:  # 確保有足夠的欄位
+            continue
+        _, emp_id, emp_dept, emp_name, emp_title, shift_date, shift_type, e_value, class_code = row[:9]
+        
         if not emp_id or not emp_name or not shift_date:
             continue
         emp_key = f"{emp_id}|{emp_name}"
@@ -144,42 +153,86 @@ def create_shift_summary(wb):
         ws_target.append(row)
 
 # --------------------
-# Streamlit 主程式
+# Streamlit 主程式（修正版）
 # --------------------
 st.title("班表處理器")
 shift_file = st.file_uploader("上傳班表 Excel 檔案", type=["xlsx","xlsm"])
 employee_file = st.file_uploader("上傳員工資料 Excel 檔案", type=["xlsx","xlsm"])
 
 if shift_file and employee_file:
-    wb_shift = load_workbook(shift_file)
-    wb_employee = load_workbook(employee_file)
+    try:
+        wb_shift = load_workbook(shift_file)
+        wb_employee = load_workbook(employee_file)
 
-    selectable_sheets = [s for s in wb_shift.sheetnames if s not in ["彙整結果","班別分析","班別總表"]]
-    selected_sheets = st.multiselect("選擇要處理的工作表", selectable_sheets)
-    
-    employee_sheet_name = st.selectbox("選擇員工資料工作表", wb_employee.sheetnames)
-    ws_employee = wb_employee[employee_sheet_name]
-
-    if st.button("開始處理"):
-        df_consolidated = consolidate_selected_sheets(wb_shift, selected_sheets)
+        selectable_sheets = [s for s in wb_shift.sheetnames if s not in ["彙整結果","班別分析","班別總表"]]
+        selected_sheets = st.multiselect("選擇要處理的工作表", selectable_sheets)
         
-        # 將彙整結果寫入
-        if "彙整結果" in wb_shift.sheetnames:
-            ws_out = wb_shift["彙整結果"]
-            ws_out.delete_rows(1, ws_out.max_row)
+        if not selected_sheets:
+            st.warning("請至少選擇一個工作表")
         else:
-            ws_out = wb_shift.create_sheet("彙整結果")
-        for r_idx, row in df_consolidated.iterrows():
-            for c_idx, val in enumerate(row, 1):
-                ws_out.cell(row=r_idx+2, column=c_idx, value=val)
+            employee_sheet_name = st.selectbox("選擇員工資料工作表", wb_employee.sheetnames)
+            
+            if employee_sheet_name:
+                ws_employee = wb_employee[employee_sheet_name]
 
-        # 建立班別分析表
-        create_shift_analysis(wb_shift, df_consolidated, ws_employee)
-        # 建立班別總表
-        create_shift_summary(wb_shift)
+                if st.button("開始處理"):
+                    with st.spinner("正在處理班表資料..."):
+                        # 彙整班表資料
+                        df_consolidated = consolidate_selected_sheets(wb_shift, selected_sheets)
+                        
+                        # 顯示彙整結果預覽
+                        st.subheader("彙整結果預覽")
+                        st.dataframe(df_consolidated.head(10))
+                        
+                        # 將彙整結果寫入工作表
+                        if "彙整結果" in wb_shift.sheetnames:
+                            ws_out = wb_shift["彙整結果"]
+                            ws_out.delete_rows(1, ws_out.max_row)
+                        else:
+                            ws_out = wb_shift.create_sheet("彙整結果")
+                        
+                        # 寫入標題行
+                        headers = ["診所","日期","班別","姓名","A欄資料","U欄資料"]
+                        for c_idx, header in enumerate(headers, 1):
+                            ws_out.cell(row=1, column=c_idx, value=header)
+                        
+                        # 寫入資料
+                        for r_idx, row in df_consolidated.iterrows():
+                            for c_idx, val in enumerate(row, 1):
+                                ws_out.cell(row=r_idx+2, column=c_idx, value=val)
 
-        # 儲存到暫存檔
-        tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx")
-        wb_shift.save(tmp_file.name)
-        st.success("所有班表任務已完成！")
-        st.download_button("下載結果 Excel", data=open(tmp_file.name,"rb"), file_name="output.xlsx")
+                        # 建立班別分析表
+                        create_shift_analysis(wb_shift, df_consolidated, ws_employee)
+                        
+                        # 建立班別總表
+                        create_shift_summary(wb_shift)
+
+                        # 儲存到暫存檔
+                        with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp_file:
+                            wb_shift.save(tmp_file.name)
+                            
+                            # 讀取檔案內容
+                            with open(tmp_file.name, "rb") as f:
+                                file_data = f.read()
+                            
+                            # 清理暫存檔
+                            os.unlink(tmp_file.name)
+                            
+                        st.success("所有班表任務已完成！")
+                        st.download_button(
+                            label="下載結果 Excel",
+                            data=file_data,
+                            file_name="班表處理結果.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        )
+                        
+                        # 顯示處理統計
+                        st.subheader("處理統計")
+                        st.write(f"總共處理了 {len(df_consolidated)} 筆班表記錄")
+                        st.write(f"處理了 {len(selected_sheets)} 個工作表")
+                        
+    except Exception as e:
+        st.error(f"處理過程中發生錯誤：{str(e)}")
+        st.write("請檢查檔案格式是否正確")
+else:
+    st.info("請上傳班表 Excel 檔案和員工資料 Excel 檔案以開始處理")
