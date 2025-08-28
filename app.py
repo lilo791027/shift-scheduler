@@ -59,7 +59,7 @@ def consolidate_selected_sheets(wb, sheet_names):
     return df
 
 # --------------------
-# 模組 3：建立班別分析表（含班別代碼）
+# 模組 3：建立班別分析表（含班別代碼）並過濾無效姓名
 # --------------------
 def create_shift_analysis(df_shift: pd.DataFrame, df_emp: pd.DataFrame) -> pd.DataFrame:
     df_shift = df_shift.copy()
@@ -134,6 +134,11 @@ def create_shift_analysis(df_shift: pd.DataFrame, df_emp: pd.DataFrame) -> pd.Da
         data_out,
         columns=["診所", "員工編號", "所屬部門", "姓名", "職稱", "日期", "班別", "E欄資料", "班別代碼"]
     )
+
+    # 過濾無效姓名
+    invalid_names = ["None", "nan", "義診", "單診", "盤點", "電打"]
+    df_analysis = df_analysis[~df_analysis["姓名"].astype(str).str.strip().isin(invalid_names)].copy()
+
     return df_analysis
 
 def format_shift_order(shift_str: str) -> str:
@@ -193,6 +198,8 @@ def create_shift_summary(df_analysis: pd.DataFrame) -> pd.DataFrame:
     for _, row in df_analysis.iterrows():
         emp_id = str(row["員工編號"])
         emp_name = row["姓名"]
+        if not emp_name or str(emp_name).strip() in ["None", "nan"]:
+            continue
         shift_date = row["日期"].strftime("%Y-%m-%d")
         class_code = row["班別代碼"]
 
@@ -241,9 +248,7 @@ if shift_file and employee_file:
             df_summary = create_shift_summary(df_analysis)
 
             st.success("處理完成！")
-            st.subheader("班別分析表")
-            st.dataframe(df_analysis)
-            st.subheader("班別總表")
+            st.subheader("班別總表（已過濾無效姓名）")
             st.dataframe(df_summary)
 
             # 下載 Excel（只含班別總表）
@@ -256,4 +261,3 @@ if shift_file and employee_file:
                     file_name="班別總表.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
-
