@@ -1,151 +1,185 @@
+import streamlit as st
 import pandas as pd
+from openpyxl import load_workbook
+import collections
+from datetime import datetime
+import tempfile
+import os
 
-# =========================
-# 讀取 Excel
-# =========================
-excel_file = "班表.xlsx"
-ws_total = pd.read_excel(excel_file, sheet_name="總表")
-ws_employee = pd.read_excel(excel_file, sheet_name="員工人事資料明細表")
+# --------------------
+# 模組 1: 解合併並填入原值
+# --------------------
+def unmerge_and_fill(ws):
+    for merged in list(ws.merged_cells.ranges):
+        value = ws.cell(merged.min_row, merged.min_col).value
+        ws.unmerge_cells(str(merged))
+        for row in ws[merged.coord]:
+            for cell in row:
+                cell.value = value
 
-# =========================
-# 模組 1：解除總表合併（openpyxl 可處理，如果需要）
-# =========================
-# pandas 讀取後一般已經展開合併儲存格，通常不需額外操作
-
-# =========================
-# 模組 2：整理班別資料（含空白列）
-# =========================
-records = []
-clinic_name = ws_total.iloc[0, 0][:4]  # 取前 4 個字作診所名
-
-for col in ws_total.columns[1:]:
-    for idx, val in ws_total[col].items():
-        if pd.to_datetime(val, errors='coerce') is not pd.NaT:
-            date_value = val
-            i = idx + 3
-            while i < len(ws_total):
-                shift_type = str(ws_total.iloc[i, ws_total.columns.get_loc(col)]).strip()
-                if pd.to_datetime(shift_type, errors='coerce') is not pd.NaT or shift_type == "":
-                    break
-                if shift_type in ["早", "午", "晚"]:
-                    i += 1
-                    while i < len(ws_total):
-                        cell_val = str(ws_total.iloc[i, 0]).strip()
-                        if cell_val in ["早", "午", "晚"] or pd.to_datetime(ws_total.iloc[i, col], errors='coerce') is not pd.NaT:
+# --------------------
+# 模組 2: 彙整班表資料
+# --------------------
+def consolidate_selected_sheets(wb, sheet_names):
+    all_data = []
+    for sheet_name in sheet_names:
+        ws = wb[sheet_name]
+        unmerge_and_fill(ws)
+        clinic_name = str(ws.cell(row=1, column=1).value)[:4]
+        max_row = ws.max_row
+        max_col = ws.max_column
+        for r in range(1, max_row+1):
+            for c in range(2, max_col+1):
+                cell_value = ws.cell(r, c).value
+                if isinstance(cell_value, datetime):
+                    date_val = cell_value
+                    i = r + 3
+                    while i <= max_row:
+                        shift_type = str(ws.cell(i, c).value).strip()
+                        if isinstance(ws.cell(i, c).value, datetime) or shift_type == "":
                             break
-                        records.append({
-                            "診所": clinic_name,
-                            "日期": date_value,
-                            "班別": shift_type,
-                            "姓名": ws_total.iloc[i, col],
-                            "A欄資料": ws_total.iloc[i, 0],
-                            "U欄資料": ws_total.iloc[i, 20]  # pandas index 從0開始
-                        })
+                        if shift_type in ["早","午","晚"]:
+                            i += 1
+                            while i <= max_row:
+                                if isinstance(ws.cell(i, c).value, datetime):
+                                    break
+                                val = str(ws.cell(i, c).value).strip()
+                                if val in ["早","午","晚"]:
+                                    break
+                                all_data.append([
+                                    clinic_name,
+                                    date_val.strftime("%Y/%m/%d"),
+                                    shift_type,
+                                    val,
+                                    ws.cell(i, 1).value,
+                                    ws.cell(i, 21).value
+                                ])
+                                i += 1
+                            i -= 1
                         i += 1
-                    i -= 1
-                i += 1
+    df = pd.DataFrame(all_data, columns=["診所","日期","班別","姓名","A欄資料","U欄資料"])
+    return df
 
-df_shift = pd.DataFrame(records)
-
-# =========================
-# 模組 3：建立班別分析表與班別代碼
-# =========================
-# 建立員工字典
-emp_dict = {}
-for _, row in ws_employee.iterrows():
-    name = str(row[1]).strip()
-    if name:
-        emp_dict[name] = {
-            "empID": str(row[0]),
-            "empDept": row[2],
-            "empTitle": row[3]
-        }
-
-# 合併班別
-shift_dict = {}
-for _, row in df_shift.iterrows():
-    key = f"{row['姓名']}|{row['日期'].strftime('%Y/%m/%d')}|{row['診所']}"
-    if key not in shift_dict:
-        shift_dict[key] = row['班別']
-    else:
-        shift_dict[key] += " " + row['班別']
-
-def format_shift_order(s):
+# --------------------
+# 模組 3: 建立班別分析表
+# --------------------
+def format_shift_order(shift_str):
     result = ""
-    for x in ["早", "午", "晚"]:
-        if x in s:
-            result += x
+    for s in ["早","午","晚"]:
+        if s in shift_str:
+            result += s
     return result
 
-def get_class_code(empTitle, clinicName, shiftType):
-    if not empTitle or pd.isna(empTitle):
+def get_class_code(emp_title, clinic_name, shift_type):
+    if not emp_title:
         return ""
-    if empTitle in ["早班護理師", "早班內視鏡助理", "醫務專員", "兼職早班內視鏡助理"]:
-        return "【員工】純早班"
+    if emp_title == "醫師":
+        class_code = "★醫師★"
+    else:
+        class_code = "【員工】"
+    class_code += shift_type + "班"
+    return class_code
+
+def create_shift_analysis(wb, df_consolidated, ws_employee):
+    emp_dict = {}
+    for row in ws_employee.iter_rows(min_row=2, values_only=True):
+        emp_id, name, dept, title = row[:4]
+        if name:
+            emp_dict[name.strip()] = (emp_id, dept, title)
+
+    shift_dict = {}
+    for idx, row in df_consolidated.iterrows():
+        clinic, date_str, shift_type, name, e_value, _ = row
+        if not name or len(name) > 4:
+            continue
+        key = f"{name}|{date_str}|{clinic}|{e_value}"
+        if key not in shift_dict:
+            shift_dict[key] = shift_type
+        else:
+            shift_dict[key] += " " + shift_type
+
+    if "班別分析" in wb.sheetnames:
+        ws_target = wb["班別分析"]
+        ws_target.delete_rows(1, ws_target.max_row)
+    else:
+        ws_target = wb.create_sheet("班別分析")
+
+    headers = ["診所","員工編號","所屬部門","姓名","職稱","日期","班別","E欄資料","班別代碼"]
+    for col_idx, h in enumerate(headers, 1):
+        ws_target.cell(row=1, column=col_idx, value=h)
+
+    for key, shift_types in shift_dict.items():
+        name, date_str, clinic, e_value = key.split("|")
+        shift_type = format_shift_order(shift_types)
+        emp_info = emp_dict.get(name, ("","",""))
+        emp_id, emp_dept, emp_title = emp_info
+        ws_target.append([clinic, emp_id, emp_dept, name, emp_title, date_str, shift_type, e_value, get_class_code(emp_title, clinic, shift_type)])
+
+# --------------------
+# 模組 4: 建立班別總表（安全版）
+# --------------------
+def create_shift_summary(wb):
+    ws_analysis = wb["班別分析"]
+    all_dates = [datetime(2025,8,i).strftime("%Y-%m-%d") for i in range(1,32)]
+    shift_dict = collections.defaultdict(dict)
+
+    for row in ws_analysis.iter_rows(min_row=2, values_only=True):
+        row_data = list(row[1:10]) + [""] * (9 - len(row[1:10]))
+        emp_id, emp_name, _, _, _, shift_date, _, _, class_code = row_data
+        if not emp_id or not emp_name or not shift_date:
+            continue
+        emp_key = f"{emp_id}|{emp_name}"
+        shift_dict[emp_key][shift_date] = class_code
+
+    if "班別總表" in wb.sheetnames:
+        ws_target = wb["班別總表"]
+        ws_target.delete_rows(1, ws_target.max_row)
+    else:
+        ws_target = wb.create_sheet("班別總表")
+
+    ws_target.append(["員工編號","員工姓名"] + all_dates)
+    for emp_key, date_map in shift_dict.items():
+        emp_id, emp_name = emp_key.split("|")
+        row = [emp_id, emp_name] + [date_map.get(d,"") for d in all_dates]
+        ws_target.append(row)
+
+# --------------------
+# Streamlit 主程式
+# --------------------
+st.title("班表處理器")
+shift_file = st.file_uploader("上傳班表 Excel 檔案", type=["xlsx","xlsm"])
+employee_file = st.file_uploader("上傳員工資料 Excel 檔案", type=["xlsx","xlsm"])
+
+if shift_file and employee_file:
+    wb_shift = load_workbook(shift_file)
+    wb_employee = load_workbook(employee_file)
+
+    selectable_sheets = [s for s in wb_shift.sheetnames if s not in ["彙整結果","班別分析","班別總表"]]
+    selected_sheets = st.multiselect("選擇要處理的工作表", selectable_sheets)
     
-    classCode = ""
-    if empTitle == "醫師":
-        classCode = "★醫師★"
-    elif empTitle in ["櫃臺", "護理師", "兼職護理師", "兼職跟診助理", "副店長", "護士", "藥師"] or "副店長" in empTitle:
-        classCode = "【員工】"
-    elif "店長" in empTitle or "採購儲備組長" in empTitle:
-        classCode = "◇主管◇"
+    employee_sheet_name = st.selectbox("選擇員工資料工作表", wb_employee.sheetnames)
+    ws_employee = wb_employee[employee_sheet_name]
 
-    if shiftType != "早":
-        if clinicName in ["上吉診所", "立吉診所", "上承診所", "立全診所", "立竹診所", "立順診所", "上京診所"]:
-            classCode += "板土中京"
-        elif clinicName == "立丞診所":
-            classCode += "立丞"
+    if st.button("開始處理"):
+        df_consolidated = consolidate_selected_sheets(wb_shift, selected_sheets)
+        
+        # 將彙整結果寫入
+        if "彙整結果" in wb_shift.sheetnames:
+            ws_out = wb_shift["彙整結果"]
+            ws_out.delete_rows(1, ws_out.max_row)
+        else:
+            ws_out = wb_shift.create_sheet("彙整結果")
+        for r_idx, row in df_consolidated.iterrows():
+            for c_idx, val in enumerate(row, 1):
+                ws_out.cell(row=r_idx+2, column=c_idx, value=val)
 
-    mapping = {
-        "早": "早班",
-        "午晚": "午晚班",
-        "早午晚": "全天班",
-        "早晚": "早晚班",
-        "午": "午班",
-        "晚": "晚班",
-        "早午": "早午班"
-    }
-    classCode += mapping.get(shiftType, "")
-    return classCode.replace("早班早班", "早班")
+        # 建立班別分析表
+        create_shift_analysis(wb_shift, df_consolidated, ws_employee)
+        # 建立班別總表
+        create_shift_summary(wb_shift)
 
-# 輸出班別分析表
-records_analysis = []
-for key, shiftType in shift_dict.items():
-    name, dateValue, clinicName = key.split("|")
-    shiftType = format_shift_order(shiftType)
-    emp_info = emp_dict.get(name, {"empID": "", "empDept": "", "empTitle": ""})
-    records_analysis.append({
-        "診所": clinicName,
-        "員工編號": emp_info["empID"],
-        "所屬部門": emp_info["empDept"],
-        "姓名": name,
-        "職稱": emp_info["empTitle"],
-        "日期": dateValue,
-        "班別": shiftType,
-        "E欄資料": "",
-        "班別代碼": get_class_code(emp_info["empTitle"], clinicName, shiftType)
-    })
-
-df_analysis = pd.DataFrame(records_analysis)
-
-# =========================
-# 模組 4：建立班別總表
-# =========================
-df_analysis['日期'] = pd.to_datetime(df_analysis['日期'])
-df_summary = df_analysis.pivot_table(
-    index=['員工編號', '姓名'],
-    columns='日期',
-    values='班別代碼',
-    aggfunc='first'
-).reset_index()
-
-# =========================
-# 寫入 Excel
-# =========================
-with pd.ExcelWriter("班表結果.xlsx", engine="openpyxl") as writer:
-    df_shift.to_excel(writer, sheet_name="彙整結果", index=False)
-    df_analysis.to_excel(writer, sheet_name="班別分析", index=False)
-    df_summary.to_excel(writer, sheet_name="班別總表", index=False)
-
-print("班表處理完成！")
+        # 儲存到暫存檔
+        tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx")
+        wb_shift.save(tmp_file.name)
+        st.success("所有班表任務已完成！")
+        st.download_button("下載結果 Excel", data=open(tmp_file.name,"rb"), file_name="output.xlsx")
