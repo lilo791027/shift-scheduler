@@ -3,7 +3,6 @@ import pandas as pd
 from openpyxl import load_workbook
 from io import BytesIO
 from datetime import datetime
-import tempfile
 
 # --------------------
 # 模組 1：解除合併儲存格並填入原值
@@ -229,25 +228,31 @@ if shift_file and employee_file:
     employee_sheet_name = st.selectbox("選擇員工資料工作表", wb_emp.sheetnames)
 
     if st.button("開始處理"):
-        df_shift = consolidate_selected_sheets(wb_shift, selected_sheets)
-        ws_emp = wb_emp[employee_sheet_name]
-        data_emp = ws_emp.values
-        cols_emp = next(data_emp)
-        df_emp = pd.DataFrame(data_emp, columns=cols_emp)
+        if not selected_sheets:
+            st.warning("請至少選擇一個工作表！")
+        else:
+            df_shift = consolidate_selected_sheets(wb_shift, selected_sheets)
+            ws_emp = wb_emp[employee_sheet_name]
+            data_emp = ws_emp.values
+            cols_emp = [str(c).strip() for c in next(data_emp)]
+            df_emp = pd.DataFrame(data_emp, columns=cols_emp)
 
-        df_analysis = create_shift_analysis(df_shift, df_emp)
-        df_summary = create_shift_summary(df_analysis)
+            df_analysis = create_shift_analysis(df_shift, df_emp)
+            df_summary = create_shift_summary(df_analysis)
 
-        st.success("處理完成！")
-        st.subheader("班別分析表")
-        st.dataframe(df_analysis)
-        st.subheader("班別總表")
-        st.dataframe(df_summary)
+            st.success("處理完成！")
+            st.subheader("班別分析表")
+            st.dataframe(df_analysis)
+            st.subheader("班別總表")
+            st.dataframe(df_summary)
 
-        # 下載 Excel
-        with BytesIO() as output:
-            with pd.ExcelWriter(output, engine="openpyxl") as writer:
-                df_shift.to_excel(writer, sheet_name="彙整結果", index=False)
-                df_analysis.to_excel(writer, sheet_name="班別分析", index=False)
-                df_summary.to_excel(writer, sheet_name="班別總表", index=False)
-            st.download_button("下載處理結果 Excel", data=output.getvalue(), file_name="班表處理結果.xlsx")
+            # 下載 Excel（只含班別總表）
+            with BytesIO() as output:
+                with pd.ExcelWriter(output, engine="openpyxl") as writer:
+                    df_summary.to_excel(writer, sheet_name="班別總表", index=False)
+                st.download_button(
+                    "下載班別總表 Excel",
+                    data=output.getvalue(),
+                    file_name="班別總表.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
