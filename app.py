@@ -38,7 +38,10 @@ def create_shift_analysis(df_shift: pd.DataFrame, df_emp: pd.DataFrame) -> pd.Da
     for _, row in df_emp.iterrows():
         name = str(row.get(emp_col_map.get("name"), "")).strip()
         if name:
-            emp_dict[name] = (str(row.get(emp_col_map.get("id"), "")).strip(), str(row.get(emp_col_map.get("title"), "")).strip())
+            emp_dict[name] = (
+                str(row.get(emp_col_map.get("id"), "")).strip(),
+                str(row.get(emp_col_map.get("title"), "")).strip(),
+            )
 
     shift_dict = {}
     for _, row in df_shift.iterrows():
@@ -61,9 +64,12 @@ def create_shift_analysis(df_shift: pd.DataFrame, df_emp: pd.DataFrame) -> pd.Da
         name, date_val, clinic = key.split("|")
         emp_id, emp_title = emp_dict.get(name, ("", ""))
         shift_type = "".join([s for s in ["早", "午", "晚"] if s in shifts])
-        data_out.append([emp_id, name, date_val, shift_type])
+        data_out.append([clinic, emp_id, name, date_val, shift_type, emp_title])
 
-    df_analysis = pd.DataFrame(data_out, columns=["員工編號", "員工姓名", "日期", "班別"])
+    df_analysis = pd.DataFrame(
+        data_out,
+        columns=["診所", "員工編號", "姓名", "日期", "班別", "職稱"]
+    )
     return df_analysis
 
 # --------------------
@@ -78,14 +84,14 @@ def create_shift_summary(df_analysis: pd.DataFrame) -> pd.DataFrame:
     summary_dict = {}
     for _, row in df_analysis.iterrows():
         emp_id = str(row["員工編號"])
-        emp_name = row["員工姓名"]
+        emp_name = row["姓名"]
         shift_date = row["日期"].strftime("%Y-%m-%d")
-        class_code = row["班別"]
+        shift_type = row["班別"]
 
         key = (emp_id, emp_name)
         if key not in summary_dict:
             summary_dict[key] = {}
-        summary_dict[key][shift_date] = class_code
+        summary_dict[key][shift_date] = shift_type
 
     data_out = []
     for (emp_id, emp_name), shifts in summary_dict.items():
@@ -99,7 +105,7 @@ def create_shift_summary(df_analysis: pd.DataFrame) -> pd.DataFrame:
 # --------------------
 # Streamlit 主程式
 # --------------------
-st.title("上吉醫療-班表轉換鋒形格式")
+st.title("班表處理器（保留分析表與彙整結果，下載班別總表）")
 
 shift_file = st.file_uploader("上傳班表 Excel 檔案", type=["xlsx", "xlsm"])
 employee_file = st.file_uploader("上傳員工資料 Excel 檔案", type=["xlsx", "xlsm"])
@@ -108,14 +114,26 @@ if shift_file and employee_file:
     df_shift = pd.read_excel(shift_file)
     df_emp = pd.read_excel(employee_file)
 
-    if st.button("生成班別總表"):
-        df_analysis = create_shift_analysis(df_shift, df_emp)
-        df_summary = create_shift_summary(df_analysis)
+    # 建立「彙整結果」與「班別分析表」
+    st.subheader("彙整結果")
+    st.dataframe(df_shift)
 
-        st.success("班別總表生成完成！")
-        st.dataframe(df_summary)
+    df_analysis = create_shift_analysis(df_shift, df_emp)
+    st.subheader("班別分析表")
+    st.dataframe(df_analysis)
 
-        with BytesIO() as output:
-            with pd.ExcelWriter(output, engine="openpyxl") as writer:
-                df_summary.to_excel(writer, sheet_name="班別總表", index=False)
-            st.download_button("下載班別總表 Excel", data=output.getvalue(), file_name="班別總表.xlsx")
+    # 生成班別總表
+    df_summary = create_shift_summary(df_analysis)
+
+    st.subheader("班別總表")
+    st.dataframe(df_summary)
+
+    # 下載班別總表
+    with BytesIO() as output:
+        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+            df_summary.to_excel(writer, sheet_name="班別總表", index=False)
+        st.download_button(
+            "下載班別總表 Excel",
+            data=output.getvalue(),
+            file_name="班別總表.xlsx"
+        )
