@@ -214,7 +214,7 @@ def create_shift_summary(df_analysis: pd.DataFrame) -> pd.DataFrame:
 # --------------------
 # Streamlit 主程式
 # --------------------
-st.title("班表處理器")
+st.title("上吉醫療-班表轉換鋒形")
 
 shift_file = st.file_uploader("上傳班表 Excel 檔案", type=["xlsx", "xlsm"])
 employee_file = st.file_uploader("上傳員工資料 Excel 檔案", type=["xlsx", "xlsm"])
@@ -251,3 +251,4 @@ if shift_file and employee_file:
                 df_analysis.to_excel(writer, sheet_name="班別分析", index=False)
                 df_summary.to_excel(writer, sheet_name="班別總表", index=False)
             st.download_button("下載處理結果 Excel", data=output.getvalue(), file_name="班表處理結果.xlsx")
+
